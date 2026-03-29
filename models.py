@@ -3,6 +3,7 @@ from sklearn.ensemble import GradientBoostingClassifier, HistGradientBoostingCla
 from sklearn.base import BaseEstimator
 import numpy as np
 import joblib
+from datetime import datetime
 
 # Importar ensemble si está disponible
 try:
@@ -146,11 +147,29 @@ class Models:
             return self.model.get_model_agreement(X)
         return 1.0  # Confianza 100% por defecto en modelo simple
 
-    def save_model(self, filename):
-        """Guarda el modelo entrenado."""
-        joblib.dump(self.model, filename)
-        
-    def load_model(self, filename):
-        """Carga un modelo guardado."""
-        self.model = joblib.load(filename)
-        self.is_trained = True
+    def save_model(self, filepath):
+        """Guarda el modelo entrenado con todos sus metadatos."""
+        bundle = {
+            'game_type': self.game_type,
+            'use_ensemble': self.use_ensemble,
+            'model': self.model,
+            'sb_model': getattr(self, 'sb_model', None),
+            'is_trained': self.is_trained,
+            'sb_is_trained': self.sb_is_trained,
+            'saved_at': datetime.now().isoformat()
+        }
+        joblib.dump(bundle, filepath)
+
+    def load_model(self, filepath):
+        """Carga un modelo guardado. Retorna la fecha de guardado o None si falla."""
+        try:
+            bundle = joblib.load(filepath)
+            self.model = bundle['model']
+            self.is_trained = bundle.get('is_trained', True)
+            self.sb_is_trained = bundle.get('sb_is_trained', False)
+            if not self.use_ensemble and bundle.get('sb_model') is not None:
+                self.sb_model = bundle['sb_model']
+            return bundle.get('saved_at', 'fecha desconocida')
+        except Exception as e:
+            print(f"⚠️ No se pudo cargar modelo desde {filepath}: {e}")
+            return None

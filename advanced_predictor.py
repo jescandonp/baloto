@@ -25,6 +25,7 @@ class AdvancedPredictor:
         self.data_df = data_df
         self.config = config
         self.historical_patterns = self._analyze_historical_patterns()
+        self._current_number_probs = {}  # Cache de probabilidades para scoring
     
     def _analyze_historical_patterns(self):
         """Analiza patrones históricos para scoring."""
@@ -70,8 +71,9 @@ class AdvancedPredictor:
         """
         sequences = []
         
-        # Obtener probabilidades de números
+        # Obtener probabilidades de números y cachearlas para scoring
         top_numbers = self.model.get_top_numbers(X_pred, n_top=30)
+        self._current_number_probs = {n: p for n, p in top_numbers}
         
         # Obtener superbalotas (si aplica)
         top_sb = []
@@ -260,8 +262,16 @@ class AdvancedPredictor:
         """
         scores = {}
         
-        # 1. ML Probability Score (ya incluido en generación)
-        scores['ml_prob'] = 0.5  # Placeholder, se puede calcular si se tiene acceso
+        # 1. ML Probability Score - promedio de probabilidades del ensemble para estos números
+        if self._current_number_probs:
+            seq_probs = [self._current_number_probs.get(n, 0.0) for n in numbers]
+            raw_avg = float(np.mean(seq_probs)) if seq_probs else 0.0
+            all_probs = list(self._current_number_probs.values())
+            global_mean = float(np.mean(all_probs)) if all_probs else 0.01
+            # Una secuencia promedio → ~0.5, una con los mejores números → ~1.0
+            scores['ml_prob'] = min(raw_avg / (2 * global_mean), 1.0)
+        else:
+            scores['ml_prob'] = 0.5
         
         # 2. Historical Pattern Score
         scores['pattern_match'] = self._pattern_similarity_score(numbers)

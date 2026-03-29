@@ -12,6 +12,7 @@ from baloto_system.feature_engineering import FeatureEngineer
 from baloto_system.models import Models
 from baloto_system.statistics_analyzer import StatisticsAnalyzer
 import pandas as pd
+import glob as glob_module
 
 class BalotoSystem:
     def __init__(self):
@@ -46,6 +47,8 @@ class BalotoSystem:
                 self.show_statistics()
             elif choice == '6':
                 self.configure_training()
+            elif choice == '7':
+                self.run_backtest()
             elif choice == '0':
                 print("👋 Hasta luego!")
                 break
@@ -55,6 +58,8 @@ class BalotoSystem:
     def print_menu(self):
         print("\n--- MENÚ PRINCIPAL ---")
         print(f"Juegos cargados: {', '.join(self.loaded_games) if self.loaded_games else 'Ninguno'}")
+        models_str = f"Modelos listos: {', '.join(self.models.keys()) if self.models else 'Ninguno'}"
+        print(models_str)
         mode_str = "Ensemble" if self.use_ensemble else "Simple"
         print(f"Modo entrenamiento: {mode_str}")
         print("1. 📂 Cargar datos CSV")
@@ -63,7 +68,54 @@ class BalotoSystem:
         print("4. 🎯 Predicción múltiple (Top 10 secuencias)")
         print("5. 📊 Ver estadísticas")
         print("6. ⚙️  Configurar entrenamiento")
+        print("7. 📈 Backtesting (Validación histórica)")
         print("0. 🚪 Salir")
+
+    def _get_model_dir(self):
+        """Retorna la carpeta de modelos guardados, creándola si no existe."""
+        model_dir = os.path.join(current_dir, 'saved_models')
+        os.makedirs(model_dir, exist_ok=True)
+        return model_dir
+
+    def _save_models(self):
+        """Guarda todos los modelos entrenados en disco."""
+        model_dir = self._get_model_dir()
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        for game, model in self.models.items():
+            if model.is_trained:
+                filepath = os.path.join(model_dir, f'{game}_{timestamp}.joblib')
+                model.save_model(filepath)
+                print(f"   💾 Modelo {game} guardado: {os.path.basename(filepath)}")
+
+    def _load_saved_models(self):
+        """Carga los modelos más recientes desde disco si existen."""
+        model_dir = self._get_model_dir()
+        loaded_any = False
+
+        for game in self.loaded_games:
+            pattern = os.path.join(model_dir, f'{game}_*.joblib')
+            files = sorted(glob_module.glob(pattern))
+            if not files:
+                continue
+
+            newest = files[-1]  # Los nombres son YYYYMMDD_HHMMSS, orden léxico = cronológico
+            model = Models(game, use_ensemble=self.use_ensemble)
+            saved_at = model.load_model(newest)
+            if saved_at:
+                self.models[game] = model
+                # Inicializar predictor avanzado
+                try:
+                    from baloto_system.advanced_predictor import AdvancedPredictor
+                    df = self.dm.data[game]
+                    config = self.dm.game_configs[game]
+                    self.advanced_predictors[game] = AdvancedPredictor(model, df, config)
+                except ImportError:
+                    pass
+                print(f"   ✅ Modelo {game} cargado (guardado el {saved_at[:19]})")
+                loaded_any = True
+
+        if loaded_any:
+            print("   💡 Modelos listos. No es necesario re-entrenar.")
 
     def load_default_data(self):
         # Archivos esperados por defecto (rutas relativas al script)
@@ -77,6 +129,7 @@ class BalotoSystem:
             print("\n🔄 Cargando archivos por defecto...")
             self.dm.load_data(files['baloto'], files['miloto'], files.get('colorloto'))
             self.loaded_games = [k for k, v in self.dm.data.items() if not v.empty]
+            self._load_saved_models()
         else:
             print("\nℹ️ No se encontraron archivos de datos por defecto.")
 
@@ -106,6 +159,7 @@ class BalotoSystem:
 
             self.dm.load_data(b_file, m_file, c_file)
             self.loaded_games = [k for k, v in self.dm.data.items() if not v.empty]
+            self._load_saved_models()
         else:
             print(f"❌ Archivos no encontrados:\n   - {b_file}\n   - {m_file}")
 
@@ -132,7 +186,7 @@ class BalotoSystem:
             success = self.models[game].train(X, y, y_sb)
             if success:
                 print(f"   ✅ Modelo {game} entrenado exitosamente.")
-                
+
                 # Inicializar predictor avanzado
                 try:
                     from baloto_system.advanced_predictor import AdvancedPredictor
@@ -141,6 +195,10 @@ class BalotoSystem:
                     )
                 except ImportError:
                     pass
+
+        # Guardar todos los modelos entrenados
+        print("\n💾 Guardando modelos en disco...")
+        self._save_models()
 
     def generate_prediction_simple(self):
         """Predicción simple (1 secuencia) - modo clásico."""
@@ -311,6 +369,31 @@ class BalotoSystem:
                 print("\n✅ Cambiado a modo Ensemble. Re-entrena los modelos para aplicar.")
             else:
                 print("❌ Opción inválida.")
+
+    def run_backtest(self):
+        """Backtesting: valida el modelo contra sorteos históricos."""
+        if not self.loaded_games:
+            print("⚠️ Carga datos primero.")
+            return
+
+        print("\n📈 BACKTESTING - Validación histórica")
+        print("="*50)
+        print(f"Juegos disponibles: {', '.join(self.loaded_games)}")
+        game = input("Juego a evaluar (baloto/revancha/miloto): ").strip().lower()
+        if game not in self.loaded_games:
+            print("❌ Juego no disponible.")
+            return
+
+        try:
+            n_test = int(input("¿Cuántos sorteos evaluar? (5-50) [20]: ").strip() or "20")
+            n_test = max(5, min(50, n_test))
+        except ValueError:
+            n_test = 20
+
+        from baloto_system.backtester import Backtester
+        bt = Backtester(self.fe, self.dm.game_configs)
+        bt.run(game, self.dm.data[game], n_test=n_test)
+
 
 if __name__ == "__main__":
     system = BalotoSystem()
