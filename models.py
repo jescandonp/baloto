@@ -68,7 +68,11 @@ class Models:
         
         if self.use_ensemble:
             # Entrenar ensemble
-            return self.model.train(X, y, y_sb, validate=True)
+            result = self.model.train(X, y, y_sb, validate=True)
+            if result:
+                self.is_trained = self.model.is_trained
+                self.sb_is_trained = self.model.sb_is_trained
+            return result
         else:
             # Entrenar modelo simple
             print(f"🔄 Entrenando modelo números para {self.game_type}...")
