@@ -390,9 +390,18 @@ class BalotoSystem:
         except ValueError:
             n_test = 20
 
+        print("\nModos disponibles:")
+        print("  1. Estándar    — ML top-N detallado por sorteo")
+        print("  2. Comparativo — ML vs Frecuencia vs Aleatorio en tabla")
+        mode = input("Modo (1/2) [1]: ").strip() or "1"
+
         from baloto_system.backtester import Backtester
         bt = Backtester(self.fe, self.dm.game_configs)
-        bt.run(game, self.dm.data[game], n_test=n_test)
+
+        if mode == "2":
+            bt.run_comparison(game, self.dm.data[game], n_test=n_test)
+        else:
+            bt.run(game, self.dm.data[game], n_test=n_test)
 
 
 if __name__ == "__main__":
