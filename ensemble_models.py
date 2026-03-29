@@ -156,27 +156,29 @@ class EnsembleModels:
         print(f"\n🎯 Entrenando Ensemble para {self.game_type.upper()}")
         print(f"   📊 Muestras: {len(X)} | Features: {self.feature_count}")
         
-        # Entrenar cada modelo
-        for name, model in self.models.items():
+        # Entrenar cada modelo (iterar sobre copia para poder eliminar fallidos)
+        failed_models = []
+        for name, model in list(self.models.items()):
             try:
                 print(f"\n   🔄 Entrenando {name}...")
                 model.fit(X, y)
-                
+
                 # Validación cruzada opcional (solo para el primer output)
                 if validate and len(X) > 100:
                     try:
-                        # Usar solo el primer estimador para CV rápido
                         score = self._quick_validation(model, X, y)
                         print(f"      ✅ {name} completado (Score: {score:.3f})")
                     except:
                         print(f"      ✅ {name} completado")
                 else:
                     print(f"      ✅ {name} completado")
-                    
+
             except Exception as e:
                 print(f"      ❌ Error en {name}: {e}")
-                # Remover modelo fallido
-                del self.models[name]
+                failed_models.append(name)
+
+        for name in failed_models:
+            del self.models[name]
         
         if not self.models:
             print("❌ Ningún modelo se entrenó exitosamente")
@@ -187,16 +189,25 @@ class EnsembleModels:
         # Entrenar modelos de Superbalota si aplica
         if y_sb is not None:
             print(f"\n   🔄 Entrenando modelos Superbalota...")
-            for name, model in self.sb_models.items():
-                if name in self.models:  # Solo entrenar si el modelo principal funcionó
+            # Normalizar y_sb a 0-indexado para compatibilidad con XGBoost
+            y_sb_min = int(np.min(y_sb))
+            y_sb_norm = y_sb - y_sb_min  # ej: 1-16 → 0-15
+
+            failed_sb = []
+            for name, model in list(self.sb_models.items()):
+                if name in self.models:  # Solo si el modelo principal funcionó
                     try:
-                        model.fit(X, y_sb)
+                        model.fit(X, y_sb_norm)
                     except Exception as e:
                         print(f"      ⚠️ Error en SB-{name}: {e}")
-                        del self.sb_models[name]
-            
+                        failed_sb.append(name)
+
+            for name in failed_sb:
+                del self.sb_models[name]
+
             if self.sb_models:
                 self.sb_is_trained = True
+                self._sb_label_offset = y_sb_min  # Guardar offset para revertir en predicción
                 print(f"      ✅ {len(self.sb_models)} modelos SB entrenados")
         
         print(f"\n✅ Ensemble entrenado: {len(self.models)} modelos activos")
@@ -322,13 +333,14 @@ class EnsembleModels:
         if probas is None:
             return []
         
-        # Obtener clases del primer modelo SB disponible
+        # Obtener clases del primer modelo SB disponible y revertir offset de normalización
         first_model = list(self.sb_models.values())[0]
         classes = first_model.classes_
-        
+        offset = getattr(self, '_sb_label_offset', 0)
+
         sb_probs = []
         for cls, prob in zip(classes, probas[0]):
-            sb_probs.append((cls, prob))
+            sb_probs.append((int(cls) + offset, prob))  # Revertir 0-15 → 1-16
         
         sb_probs.sort(key=lambda x: x[1], reverse=True)
         return sb_probs[:n_top]
