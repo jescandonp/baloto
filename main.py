@@ -49,6 +49,8 @@ class BalotoSystem:
                 self.configure_training()
             elif choice == '7':
                 self.run_backtest()
+            elif choice == '8':
+                self.run_fun_mode()
             elif choice == '0':
                 print("👋 Hasta luego!")
                 break
@@ -69,6 +71,7 @@ class BalotoSystem:
         print("5. 📊 Ver estadísticas")
         print("6. ⚙️  Configurar entrenamiento")
         print("7. 📈 Backtesting (Validación histórica)")
+        print("8. 🎲 Modo FUN (combinaciones de suerte)")
         print("0. 🚪 Salir")
 
     def _get_model_dir(self):
@@ -369,6 +372,166 @@ class BalotoSystem:
                 print("\n✅ Cambiado a modo Ensemble. Re-entrena los modelos para aplicar.")
             else:
                 print("❌ Opción inválida.")
+
+    def run_fun_mode(self):
+        """Modo FUN: combinaciones de suerte con distintos sabores."""
+        import random as _random
+        from collections import Counter
+
+        print("\n🎲 MODO FUN — ¡Al final es suerte!")
+        print("=" * 55)
+        print(f"Juegos disponibles: {', '.join(self.loaded_games) if self.loaded_games else 'todos'}")
+        game = input("Juego (baloto/revancha/miloto) [baloto]: ").strip().lower() or "baloto"
+
+        # Configuración del juego
+        config = self.dm.game_configs.get(game)
+        if config is None:
+            print("❌ Juego no reconocido.")
+            return
+
+        lo, hi   = config['number_range']
+        k        = config['numbers_count']
+        has_sb   = config.get('has_superbalota', False)
+        sb_lo, sb_hi = config.get('superbalota_range', (1, 1))
+        all_nums = list(range(lo, hi + 1))
+
+        # Datos históricos para hot numbers (si están disponibles)
+        df = self.dm.data.get(game)
+        hot_numbers = []
+        cold_numbers = []
+        if df is not None and not df.empty:
+            lookback = min(30, len(df))
+            cnt = Counter()
+            for nums in df.iloc[-lookback:]['Numeros']:
+                cnt.update(nums)
+            sorted_by_freq = [n for n, _ in cnt.most_common()]
+            hot_numbers  = sorted_by_freq[:10]
+            cold_numbers = sorted_by_freq[-10:]
+
+        print("\n¿Cuántas combinaciones quieres generar? (1-20) [5]: ", end="")
+        try:
+            n_combos = int(input().strip() or "5")
+            n_combos = max(1, min(20, n_combos))
+        except ValueError:
+            n_combos = 5
+
+        print("\nElige el sabor de suerte:")
+        print("  1. 🎰 Puro azar          — 100% aleatorio")
+        print("  2. 🔥 Sabor caliente      — mezcla números calientes + azar")
+        print("  3. ❄️  Sabor frío          — apuesta por los que no han salido")
+        print("  4. ☯️  Equilibrio          — mitad calientes, mitad fríos + azar")
+        print("  5. 🤞 Tu número de suerte — tú fijas un número, el resto al azar")
+        print("  6. 🎂 Fecha especial       — usa dígitos de una fecha como ancla")
+        flavor = input("\nSabor (1-6) [1]: ").strip() or "1"
+
+        # Número fijo del usuario (sabor 5)
+        fixed_num = None
+        if flavor == "5":
+            try:
+                fixed_num = int(input(f"Ingresa tu número de suerte ({lo}-{hi}): ").strip())
+                if not (lo <= fixed_num <= hi):
+                    print(f"⚠️ Fuera de rango. Usando aleatorio.")
+                    fixed_num = None
+            except ValueError:
+                fixed_num = None
+
+        # Fecha especial (sabor 6)
+        date_anchors = []
+        if flavor == "6":
+            raw = input("Ingresa una fecha (DD/MM/AAAA): ").strip()
+            try:
+                parts = raw.replace("-", "/").split("/")
+                digits = []
+                for p in parts:
+                    digits += [int(p), int(p) % (hi + 1) or lo]
+                # Filtrar válidos y únicos
+                date_anchors = list({n for n in digits if lo <= n <= hi})[:3]
+                print(f"   Anclas extraídas: {date_anchors}")
+            except Exception:
+                print("⚠️ No se pudo parsear la fecha. Usando azar puro.")
+                date_anchors = []
+
+        # ---- Generación de combinaciones ----
+        print(f"\n{'='*55}")
+        print(f"🎲 {n_combos} COMBINACIONES — {game.upper()}")
+        print(f"{'='*55}")
+
+        used = set()
+        generated = 0
+        attempts  = 0
+
+        while generated < n_combos and attempts < n_combos * 50:
+            attempts += 1
+            pool = all_nums.copy()
+
+            if flavor == "1":   # Puro azar
+                picked = _random.sample(pool, k)
+
+            elif flavor == "2": # Calientes
+                if len(hot_numbers) >= k:
+                    n_hot  = _random.randint(max(2, k // 2), min(k - 1, len(hot_numbers)))
+                    hot    = _random.sample(hot_numbers, n_hot)
+                    remain = [n for n in pool if n not in hot]
+                    rest   = _random.sample(remain, k - n_hot)
+                    picked = hot + rest
+                else:
+                    picked = _random.sample(pool, k)
+
+            elif flavor == "3": # Fríos
+                if len(cold_numbers) >= k:
+                    n_cold = _random.randint(max(2, k // 2), min(k - 1, len(cold_numbers)))
+                    cold   = _random.sample(cold_numbers, n_cold)
+                    remain = [n for n in pool if n not in cold]
+                    rest   = _random.sample(remain, k - n_cold)
+                    picked = cold + rest
+                else:
+                    picked = _random.sample(pool, k)
+
+            elif flavor == "4": # Equilibrio
+                n_hot  = k // 2
+                n_cold = k // 2
+                avail_hot  = hot_numbers  if len(hot_numbers)  >= n_hot  else pool
+                avail_cold = cold_numbers if len(cold_numbers) >= n_cold else pool
+                h = _random.sample(avail_hot,  min(n_hot,  len(avail_hot)))
+                c = _random.sample([x for x in avail_cold if x not in h],
+                                   min(n_cold, len([x for x in avail_cold if x not in h])))
+                remain = [n for n in pool if n not in h and n not in c]
+                fill   = _random.sample(remain, k - len(h) - len(c))
+                picked = h + c + fill
+
+            elif flavor == "5": # Número fijo
+                anchor = fixed_num if fixed_num else _random.choice(pool)
+                remain = [n for n in pool if n != anchor]
+                rest   = _random.sample(remain, k - 1)
+                picked = [anchor] + rest
+
+            elif flavor == "6": # Fecha
+                anchors = [n for n in date_anchors if n in pool][:min(3, k - 1)]
+                remain  = [n for n in pool if n not in anchors]
+                rest    = _random.sample(remain, k - len(anchors))
+                picked  = anchors + rest
+
+            else:
+                picked = _random.sample(pool, k)
+
+            combo = tuple(sorted(picked))
+            if combo in used or len(combo) != k:
+                continue
+
+            used.add(combo)
+            generated += 1
+
+            sb_str = ""
+            if has_sb:
+                sb = _random.randint(sb_lo, sb_hi)
+                sb_str = f"  +SB: {sb:02d}"
+
+            nums_str = " - ".join(f"{n:02d}" for n in combo)
+            print(f"  #{generated:2d}  [ {nums_str} ]{sb_str}")
+
+        print(f"\n{'='*55}")
+        print("  🍀 ¡Buena suerte! Recuerda: juega con responsabilidad.")
+        print(f"{'='*55}\n")
 
     def run_backtest(self):
         """Backtesting: valida el modelo contra sorteos históricos."""
