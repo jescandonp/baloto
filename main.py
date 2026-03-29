@@ -106,14 +106,15 @@ class BalotoSystem:
             saved_at = model.load_model(newest)
             if saved_at:
                 self.models[game] = model
-                # Inicializar predictor avanzado
-                try:
-                    from baloto_system.advanced_predictor import AdvancedPredictor
-                    df = self.dm.data[game]
-                    config = self.dm.game_configs[game]
-                    self.advanced_predictors[game] = AdvancedPredictor(model, df, config)
-                except ImportError:
-                    pass
+                # Inicializar predictor avanzado (solo si hay datos cargados)
+                df = self.dm.data.get(game)
+                if df is not None and not df.empty:
+                    try:
+                        from baloto_system.advanced_predictor import AdvancedPredictor
+                        config = self.dm.game_configs[game]
+                        self.advanced_predictors[game] = AdvancedPredictor(model, df, config)
+                    except ImportError:
+                        pass
                 print(f"   ✅ Modelo {game} cargado (guardado el {saved_at[:19]})")
                 loaded_any = True
 
@@ -135,6 +136,13 @@ class BalotoSystem:
             self._load_saved_models()
         else:
             print("\nℹ️ No se encontraron archivos de datos por defecto.")
+            # Verificar si hay modelos guardados y avisar al usuario
+            model_dir = self._get_model_dir()
+            saved = glob_module.glob(os.path.join(model_dir, '*.joblib'))
+            if saved:
+                games_found = sorted({os.path.basename(f).split('_')[0] for f in saved})
+                print(f"   💾 Modelos guardados detectados: {', '.join(games_found)}")
+                print(f"   👉 Usa opción 1 para cargar los CSV y activarlos automáticamente.")
 
     def load_custom_data(self):
         print("\nℹ️ Puedes ingresar la ruta del archivo específico O la carpeta donde están.")
